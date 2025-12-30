@@ -1,0 +1,36 @@
+name: Run Private Bot via Docker (4 Hours)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  docker-bot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 260
+
+    steps:
+      # 1️⃣ Checkout 
+      - name: Checkout public repo
+        uses: actions/checkout@v4
+
+      # 2️⃣ Checkout 
+      - name: Checkout private repo
+        uses: actions/checkout@v4
+        with:
+          repository: XXB4/RX
+          token: ${{ secrets.GH_TOKEN }}
+          path: private
+
+      # 3️⃣ Build Docker image
+      - name: Build Docker image
+        run: |
+          docker build -t telegram-bot ./private
+
+      # 4️⃣ Run container
+      - name: Run bot container
+        run: |
+          docker run --rm \
+            -e GITHUB_ACTIONS=true \
+            telegram-bot
