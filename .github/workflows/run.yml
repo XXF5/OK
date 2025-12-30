@@ -1,21 +1,17 @@
-name: Run Private Bot via Docker (4 Hours)
+name: Bot Cycle (4h ON / 2h OFF)
 
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
 
 jobs:
-  docker-bot:
+  cycle:
     runs-on: ubuntu-latest
-    timeout-minutes: 260
+    timeout-minutes: 360
 
     steps:
-      # 1️⃣ Checkout 
       - name: Checkout public repo
         uses: actions/checkout@v4
 
-      # 2️⃣ Checkout 
       - name: Checkout private repo
         uses: actions/checkout@v4
         with:
@@ -23,14 +19,25 @@ jobs:
           token: ${{ secrets.GH_TOKEN }}
           path: private
 
-      # 3️⃣ Build Docker image
       - name: Build Docker image
-        run: |
-          docker build -t telegram-bot ./private
+        run: docker build -t telegram-bot ./private
 
-      # 4️⃣ Run container
-      - name: Run bot container
+      - name: Run bot for 4 hours
         run: |
           docker run --rm \
             -e GITHUB_ACTIONS=true \
-            telegram-bot
+            telegram-bot \
+            timeout 14400 python main.py
+
+      - name: Sleep 2 hours
+        run: sleep 7200
+
+      - name: Restart workflow
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+        run: |
+          curl -X POST \
+            -H "Authorization: token $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/${{ github.repository }}/actions/workflows/${{ github.workflow }}/dispatches \
+            -d '{"ref":"main"}'
