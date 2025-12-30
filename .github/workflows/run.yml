@@ -15,45 +15,50 @@ jobs:
     timeout-minutes: 260
 
     steps:
-      - name: Check UTC time (work / rest)
-        id: timecheck
+      # ===============================
+      # HARD STOP — منع التشغيل نهائيًا لو مش وقته
+      # ===============================
+      - name: HARD STOP if not work hour (UTC)
         run: |
+          echo "UTC now:"
+          date -u
+
           HOUR=$(date -u +%H)
-          echo "Current UTC hour: $HOUR"
+          WORK_HOURS="5 6 7 8 13 14 15 16 21 22 23 0"
 
-          # ساعات الشغل للريبو التاني
-          WORK_HOURS=(5 6 7 8 13 14 15 16 21 22 23 0)
+          if [[ ! " $WORK_HOURS " =~ " $HOUR " ]]; then
+            echo "⛔ Not work hour for Repo B — exiting job"
+            exit 78
+          fi
 
-          for h in "${WORK_HOURS[@]}"; do
-            if [ "$HOUR" -eq "$h" ]; then
-              echo "run=true" >> $GITHUB_OUTPUT
-              echo "✅ Working hour (Repo B)"
-              exit 0
-            fi
-          done
+          echo "✅ Allowed work hour for Repo B"
 
-          echo "run=false" >> $GITHUB_OUTPUT
-          echo "⛔ Rest hour — exiting"
-          exit 0
-
+      # ===============================
+      # Checkout public repo
+      # ===============================
       - name: Checkout public repo
-        if: steps.timecheck.outputs.run == 'true'
         uses: actions/checkout@v4
 
+      # ===============================
+      # Checkout private repo
+      # ===============================
       - name: Checkout private repo
-        if: steps.timecheck.outputs.run == 'true'
         uses: actions/checkout@v4
         with:
           repository: XXB4/RX
           token: ${{ secrets.GH_TOKEN }}
           path: private
 
+      # ===============================
+      # Docker setup
+      # ===============================
       - name: Set up Docker Buildx
-        if: steps.timecheck.outputs.run == 'true'
         uses: docker/setup-buildx-action@v3
 
+      # ===============================
+      # Build image (cached)
+      # ===============================
       - name: Build Docker image (with cache)
-        if: steps.timecheck.outputs.run == 'true'
         uses: docker/build-push-action@v5
         with:
           context: ./private
@@ -62,9 +67,9 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Run bot (4 hours)
-        if: steps.timecheck.outputs.run == 'true'
+      # ===============================
+      # Run bot (MAX 4 hours)
+      # ===============================
+      - name: Run bot (4 hours max)
         run: |
-          docker run --rm \
-            telegram-bot \
-            timeout 14400 python main.py
+          docker run --rm telegram-bot bash -c "timeout 14400 python main.py"
