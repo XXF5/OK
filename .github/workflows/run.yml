@@ -1,8 +1,8 @@
-name: Bot Cycle (4h ON / 4h OFF)
+name: Bot Cycle (Repo B - 4h ON / 4h OFF)
 
 on:
   schedule:
-    - cron: "0 * * * *"   # كل ساعة (خفيف)
+    - cron: "0 * * * *"   # كل ساعة
   workflow_dispatch:
 
 concurrency:
@@ -12,7 +12,7 @@ concurrency:
 jobs:
   cycle:
     runs-on: ubuntu-latest
-    timeout-minutes: 260   # أمان
+    timeout-minutes: 260
 
     steps:
       - name: Check UTC time (work / rest)
@@ -21,13 +21,13 @@ jobs:
           HOUR=$(date -u +%H)
           echo "Current UTC hour: $HOUR"
 
-          # ساعات الشغل (4 شغل / 4 راحة)
-          WORK_HOURS=(1 2 3 4 9 10 11 12 17 18 19 20)
+          # ساعات الشغل للريبو التاني
+          WORK_HOURS=(5 6 7 8 13 14 15 16 21 22 23 0)
 
           for h in "${WORK_HOURS[@]}"; do
             if [ "$HOUR" -eq "$h" ]; then
               echo "run=true" >> $GITHUB_OUTPUT
-              echo "✅ Working hour"
+              echo "✅ Working hour (Repo B)"
               exit 0
             fi
           done
