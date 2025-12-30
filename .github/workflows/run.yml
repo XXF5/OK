@@ -15,9 +15,9 @@ jobs:
     timeout-minutes: 260
 
     steps:
-      # ===============================
-      # HARD STOP — منع التشغيل نهائيًا لو مش وقته
-      # ===============================
+      # ======================================
+      # HARD STOP — منع التشغيل من الأساس
+      # ======================================
       - name: HARD STOP if not work hour (UTC)
         run: |
           echo "UTC now:"
@@ -27,21 +27,18 @@ jobs:
           WORK_HOURS="5 6 7 8 13 14 15 16 21 22 23 0"
 
           if [[ ! " $WORK_HOURS " =~ " $HOUR " ]]; then
-            echo "⛔ Not work hour for Repo B — exiting job"
+            echo "⛔ Not work hour — exiting job"
             exit 78
           fi
 
-          echo "✅ Allowed work hour for Repo B"
+          echo "✅ Allowed work hour — starting bot"
 
-      # ===============================
-      # Checkout public repo
-      # ===============================
+      # ======================================
+      # Checkout repos
+      # ======================================
       - name: Checkout public repo
         uses: actions/checkout@v4
 
-      # ===============================
-      # Checkout private repo
-      # ===============================
       - name: Checkout private repo
         uses: actions/checkout@v4
         with:
@@ -49,16 +46,16 @@ jobs:
           token: ${{ secrets.GH_TOKEN }}
           path: private
 
-      # ===============================
+      # ======================================
       # Docker setup
-      # ===============================
+      # ======================================
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      # ===============================
+      # ======================================
       # Build image (cached)
-      # ===============================
-      - name: Build Docker image (with cache)
+      # ======================================
+      - name: Build Docker image
         uses: docker/build-push-action@v5
         with:
           context: ./private
@@ -67,9 +64,30 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      # ===============================
-      # Run bot (MAX 4 hours)
-      # ===============================
-      - name: Run bot (4 hours max)
+      # ======================================
+      # Run bot with SMART AUTO-KILL
+      # ======================================
+      - name: Run bot (smart kill)
         run: |
-          docker run --rm telegram-bot bash -c "timeout 14400 python main.py"
+          docker run --rm telegram-bot bash -c '
+          WORK_HOURS="5 6 7 8 13 14 15 16 21 22 23 0"
+          END=$((SECONDS+14400))  # 4 hours max
+
+          echo "🚀 Bot started"
+
+          while [ $SECONDS -lt $END ]; do
+            HOUR=$(date -u +%H)
+
+            if [[ " $WORK_HOURS " =~ " $HOUR " ]]; then
+              echo "🟢 Hour $HOUR allowed — running"
+              python main.py
+            else
+              echo "⛔ Hour $HOUR خارج وقت الشغل — killing bot"
+              exit 0
+            fi
+
+            sleep 60
+          done
+
+          echo "⏱️ Max runtime reached — stopping bot"
+          '
