@@ -1,8 +1,10 @@
-name: Bot Cycle (Repo B - 4h ON / 4h OFF)
+name: Bot Cycle (Egypt Time)
 
 on:
   schedule:
-    - cron: "0 * * * *"   # كل ساعة
+    # الجدول الزمني يبقى بتوقيت UTC (كل ساعة)
+    # لكن الفلترة في الخطوات بالأسفل ستكون بتوقيت مصر
+    - cron: "0 * * * *"
   workflow_dispatch:
 
 concurrency:
@@ -16,25 +18,32 @@ jobs:
 
     steps:
       # ======================================
-      # HARD STOP — منع التشغيل من الأساس
+      # 1. فحص الوقت بتوقيت مصر
       # ======================================
-      - name: HARD STOP if not work hour (UTC)
+      - name: HARD STOP if not work hour (Egypt Time)
         run: |
-          echo "UTC now:"
-          date -u
+          # ضبط المنطقة الزمنية لمصر
+          export TZ="Africa/Cairo"
+          
+          echo "🇪🇬 Egypt Time now:"
+          date
 
-          HOUR=$(date -u +%H)
-          WORK_HOURS="5 6 7 8 13 14 15 16 21 22 23 0"
+          # استخراج الساعة بصيغة 00-23
+          HOUR=$(date +%H)
+          
+          # الساعات المسموحة (بصيغة خانتين 05 وليس 5)
+          # الأوقات: 5-8 صباحاً، 1-4 ظهراً، 9-11 مساءً، ومنتصف الليل
+          WORK_HOURS="05 06 07 08 13 14 15 16 21 22 23 00"
 
           if [[ ! " $WORK_HOURS " =~ " $HOUR " ]]; then
-            echo "⛔ Not work hour — exiting job"
+            echo "⛔ الساعة الآن ($HOUR) بتوقيت مصر - خارج أوقات العمل. إيقاف الـ Job."
             exit 78
           fi
 
-          echo "✅ Allowed work hour — starting bot"
+          echo "✅ الساعة الآن ($HOUR) بتوقيت مصر - مسموح بالعمل."
 
       # ======================================
-      # Checkout repos
+      # 2. Checkout
       # ======================================
       - name: Checkout public repo
         uses: actions/checkout@v4
@@ -47,14 +56,11 @@ jobs:
           path: private
 
       # ======================================
-      # Docker setup
+      # 3. Docker Setup & Build
       # ======================================
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      # ======================================
-      # Build image (cached)
-      # ======================================
       - name: Build Docker image
         uses: docker/build-push-action@v5
         with:
@@ -65,29 +71,50 @@ jobs:
           cache-to: type=gha,mode=max
 
       # ======================================
-      # Run bot with SMART AUTO-KILL
+      # 4. Run bot with Egypt Time Monitoring
       # ======================================
-      - name: Run bot (smart kill)
+      - name: Run bot (Egypt Time Smart Kill)
         run: |
-          docker run --rm telegram-bot bash -c '
-          WORK_HOURS="5 6 7 8 13 14 15 16 21 22 23 0"
-          END=$((SECONDS+14400))  # 4 hours max
-
-          echo "🚀 Bot started"
+          # تمرير توقيت مصر للكونتير
+          docker run --rm -e TZ=Africa/Cairo telegram-bot bash -c '
+          
+          # تعريف الساعات المسموحة داخل الكونتير أيضاً
+          WORK_HOURS=" 05 06 07 08 13 14 15 16 21 22 23 00 "
+          
+          echo "🚀 Starting Python Bot in background (Egypt Time)..."
+          
+          # تشغيل البوت في الخلفية عشان نقدر نراقب الوقت
+          python main.py &
+          BOT_PID=$!
+          
+          # مدة التشغيل القصوى (4 ساعات)
+          END=$((SECONDS+14400))
 
           while [ $SECONDS -lt $END ]; do
-            HOUR=$(date -u +%H)
-
-            if [[ " $WORK_HOURS " =~ " $HOUR " ]]; then
-              echo "🟢 Hour $HOUR allowed — running"
-              python main.py
-            else
-              echo "⛔ Hour $HOUR خارج وقت الشغل — killing bot"
-              exit 0
+            # انتظار دقيقة قبل الفحص التالي
+            sleep 60
+            
+            # 1. التأكد أن البوت لم ينهار (Crash check)
+            if ! kill -0 $BOT_PID 2>/dev/null; then
+                echo "⚠️ Bot stopped unexpectedly!"
+                exit 1
             fi
 
-            sleep 60
+            # 2. فحص الوقت الحالي بتوقيت مصر
+            CURRENT_HOUR=$(date +%H)
+            
+            # هل الساعة الحالية موجودة في القائمة؟
+            if [[ ! "$WORK_HOURS" =~ " $CURRENT_HOUR " ]]; then
+              echo "⛔ الساعة $CURRENT_HOUR (مصر) - انتهى وقت العمل. جارٍ إيقاف البوت..."
+              kill $BOT_PID
+              exit 0
+            else
+              # طباعة للتأكيد فقط (اختياري)
+              # echo "✅ الساعة $CURRENT_HOUR (مصر) - مستمر..."
+              :
+            fi
           done
 
-          echo "⏱️ Max runtime reached — stopping bot"
+          echo "⏱️ Max runtime reached (4 hours) — stopping bot"
+          kill $BOT_PID
           '
