@@ -1,0 +1,99 @@
+name: Bot Cycle (Egypt Inverse Hours)
+
+on:
+  schedule:
+    - cron: "0 * * * *"   # كل ساعة (UTC)
+  workflow_dispatch:
+
+concurrency:
+  group: bot-cycle
+  cancel-in-progress: false
+
+jobs:
+  cycle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 260
+
+    steps:
+      # ======================================
+      # 1. Egypt Time check (Inverse Hours)
+      # ======================================
+      - name: HARD STOP if not work hour (Egypt Time)
+        run: |
+          export TZ="Africa/Cairo"
+
+          echo "🇪🇬 Egypt Time now:"
+          date
+
+          HOUR=$(date +%H)
+
+          # Inverse hours:
+          # 01-04, 09-12, 17-20
+          WORK_HOURS="01 02 03 04 09 10 11 12 17 18 19 20"
+
+          if [[ ! " $WORK_HOURS " =~ " $HOUR " ]]; then
+            echo "⛔ $HOUR خارج الجدول المسموح"
+            exit 78
+          fi
+
+          echo "✅ $HOUR وقت مسموح"
+
+      # ======================================
+      # 2. Checkout
+      # ======================================
+      - name: Checkout public repo
+        uses: actions/checkout@v4
+
+      - name: Checkout private repo
+        uses: actions/checkout@v4
+        with:
+          repository: XXB4/RX
+          token: ${{ secrets.GH_TOKEN }}
+          path: private
+
+      # ======================================
+      # 3. Docker Build
+      # ======================================
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./private
+          tags: telegram-bot:latest
+          load: true
+
+      # ======================================
+      # 4. Run bot with Egypt Time monitor
+      # ======================================
+      - name: Run bot (Egypt Time Smart Kill)
+        run: |
+          docker run --rm -e TZ=Africa/Cairo telegram-bot bash -c '
+            WORK_HOURS=" 01 02 03 04 09 10 11 12 17 18 19 20 "
+
+            echo "🚀 Bot started"
+            python main.py &
+            BOT_PID=$!
+
+            END=$((SECONDS+14400))  # 4 hours
+
+            while [ $SECONDS -lt $END ]; do
+              sleep 60
+
+              if ! kill -0 $BOT_PID 2>/dev/null; then
+                echo "⚠️ Bot crashed"
+                exit 1
+              fi
+
+              CURRENT_HOUR=$(date +%H)
+              if [[ ! "$WORK_HOURS" =~ " $CURRENT_HOUR " ]]; then
+                echo "⛔ Time finished ($CURRENT_HOUR)"
+                kill $BOT_PID
+                exit 0
+              fi
+            done
+
+            echo "⏱️ Max runtime reached"
+            kill $BOT_PID
+          '
