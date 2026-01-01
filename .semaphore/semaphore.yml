@@ -1,19 +1,39 @@
 version: v1.0
-name: Run in Docker
+name: Bot Cycle (Egypt Inverse Hours)
 agent:
   machine:
-    type: f1-standard-2
-  containers:
-    - name: main
-      image: 'registry.semaphoreci.com/node:10' # Your primary container where commands are run
-    - name: database
-      image: 'registry.semaphoreci.com/postgres:11'
-
-blocks:
-  - name: Hello World
-    task:
-      jobs:
-        - name: Test job
-          commands:
-            - checkout # Check out the code
-            - echo "Hello from my 'main' container"
+    type: e1-standard-2
+    os_image: ubuntu2004
+'on':
+  schedule:
+    - cron: 0 * * * *
+  workflow_dispatch: null
+concurrency:
+  group: bot-cycle
+  cancel-in-progress: false
+jobs:
+  cycle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 260
+    steps:
+      - name: HARD STOP if not work hour (Egypt Time)
+        run: "export TZ=\"Africa/Cairo\"\n\necho \"\U0001F1EA\U0001F1EC Egypt Time now:\"\ndate\n\nHOUR=$(date +%H)\n\n# Inverse hours:\n# 01-04, 09-12, 17-20\nWORK_HOURS=\"01 02 03 04 09 10 11 12 17 18 19 20\"\n\nif [[ ! \" $WORK_HOURS \" =~ \" $HOUR \" ]]; then\n  echo \"⛔ $HOUR خارج الجدول المسموح\"\n  exit 78\nfi\n\necho \"✅ $HOUR وقت مسموح\"\n"
+      - name: Checkout public repo
+        uses: actions/checkout@v4
+      - name: Checkout private repo
+        uses: actions/checkout@v4
+        with:
+          repository: XXB4/RX
+          token: '${{ secrets.GH_TOKEN }}'
+          path: private
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Build Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./private
+          tags: 'telegram-bot:latest'
+          load: true
+      - name: Run bot (Egypt Time Smart Kill)
+        run: "docker run --rm -e TZ=Africa/Cairo telegram-bot bash -c '\n  WORK_HOURS=\" 01 02 03 04 09 10 11 12 17 18 19 20 \"\n\n  echo \"\U0001F680 Bot started\"\n  python main.py &\n  BOT_PID=$!\n\n  END=$((SECONDS+14400))  # 4 hours\n\n  while [ $SECONDS -lt $END ]; do\n    sleep 60\n\n    if ! kill -0 $BOT_PID 2>/dev/null; then\n      echo \"⚠️ Bot crashed\"\n      exit 1\n    fi\n\n    CURRENT_HOUR=$(date +%H)\n    if [[ ! \"$WORK_HOURS\" =~ \" $CURRENT_HOUR \" ]]; then\n      echo \"⛔ Time finished ($CURRENT_HOUR)\"\n      kill $BOT_PID\n      exit 0\n    fi\n  done\n\n  echo \"⏱️ Max runtime reached\"\n  kill $BOT_PID\n'\n"
+blocks: []
