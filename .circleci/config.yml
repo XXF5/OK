@@ -1,15 +1,27 @@
 version: 2.1
 
+orbs:
+  docker: circleci/docker@2.6.0
+
+workflows:
+  bot_cycle:
+    triggers:
+      - schedule:
+          cron: "0 * * * *"   # كل ساعة
+          filters:
+            branches:
+              only:
+                - main
+    jobs:
+      - cycle
+
 jobs:
   cycle:
     docker:
       - image: cimg/base:stable
     resource_class: medium
-    working_directory: ~/repo
-    parameters:
-      force-run:
-        type: boolean
-        default: false
+    timeout: 260m
+
     steps:
       # ======================================
       # 1. فحص الوقت (توقيت مصر) - الساعات المعكوسة
@@ -17,115 +29,78 @@ jobs:
       - run:
           name: HARD STOP if not work hour (Egypt Time)
           command: |
-            # ضبط المنطقة الزمنية لمصر
             export TZ="Africa/Cairo"
+
             echo "🇪🇬 Egypt Time now:"
             date
+
             HOUR=$(date +%H)
-            
-            # إذا كان التشغيل إجباري، تخطى الفحص
-            if [[ "<< parameters.force-run >>" == "true" ]]; then
-              echo "✅ تشغيل إجباري - تخطي فحص الوقت"
-              exit 0
-            fi
-            
-            # الساعات الجديدة (عكس القديمة)
-            # 01-04, 09-12, 17-20
+
+            # الساعات المسموحة
             WORK_HOURS="01 02 03 04 09 10 11 12 17 18 19 20"
+
             if [[ ! " $WORK_HOURS " =~ " $HOUR " ]]; then
-              echo "⛔ الساعة الآن ($HOUR) بتوقيت مصر - خارج الجدول الجديد. إيقاف الـ Job."
+              echo "⛔ الساعة الآن ($HOUR) بتوقيت مصر - خارج الجدول. إيقاف الـ Job."
               circleci step halt
             fi
+
             echo "✅ الساعة الآن ($HOUR) بتوقيت مصر - مسموح بالعمل."
-      
+
       # ======================================
-      # 2. Checkout code
+      # 2. Checkout
       # ======================================
       - checkout
-      
-      # ======================================
-      # 3. Checkout private repository
-      # ======================================
+
       - run:
           name: Checkout private repo
           command: |
-            mkdir -p private
-            git clone https://github.com/XXB4/RX.git private
-            cd private
-            git checkout main
-      
+            git clone https://${GH_TOKEN}@github.com/XXB4/RX.git private
+
       # ======================================
-      # 4. Docker Setup & Build
+      # 3. Docker Setup & Build
       # ======================================
       - setup_remote_docker:
-          version: 20.10.14
           docker_layer_caching: true
-          
+
       - run:
           name: Build Docker image
           command: |
-            cd private
-            docker build -t telegram-bot:latest .
-      
+            docker build -t telegram-bot:latest ./private
+
       # ======================================
-      # 5. Run bot (Monitor Egypt Time)
+      # 4. Run bot (Egypt Time Smart Kill)
       # ======================================
       - run:
           name: Run bot (Egypt Time Smart Kill)
           command: |
-            # تعريف الساعات المعكوسة داخل الكونتير
+            docker run --rm -e TZ=Africa/Cairo telegram-bot bash -c '
+            
             WORK_HOURS=" 01 02 03 04 09 10 11 12 17 18 19 20 "
             
             echo "🚀 Starting Python Bot in background (Egypt Time)..."
             
-            # تشغيل البوت في الخلفية (Background Process)
-            docker run --rm -e TZ=Africa/Cairo telegram-bot:latest python main.py &
+            python main.py &
             BOT_PID=$!
             
-            # مدة التشغيل القصوى (4 ساعات ≈ 240 دقيقة)
-            END=$((SECONDS+14400))
-            
+            END=$((SECONDS+14400))  # 4 ساعات
+
             while [ $SECONDS -lt $END ]; do
-              # انتظار دقيقة
               sleep 60
-              
-              # التأكد أن البوت لم ينهار
+
               if ! kill -0 $BOT_PID 2>/dev/null; then
                 echo "⚠️ Bot process died unexpectedly!"
                 exit 1
               fi
-              
-              # فحص الوقت بتوقيت مصر
-              export TZ="Africa/Cairo"
+
               CURRENT_HOUR=$(date +%H)
-              
-              # إذا خرجنا من الساعات المسموحة
+
               if [[ ! "$WORK_HOURS" =~ " $CURRENT_HOUR " ]]; then
                 echo "⛔ الساعة $CURRENT_HOUR (مصر) - انتهى الوقت المسموح. إيقاف البوت..."
                 kill $BOT_PID
                 exit 0
               fi
             done
-            
+
             echo "⏱️ Max runtime reached (4 hours) — stopping bot"
             kill $BOT_PID
-            exit 0
-
-workflows:
-  version: 2
-  bot-schedule:
-    jobs:
-      - cycle:
-          # جدولة التشغيل كل ساعة (تستخدم cron syntax)
-          # هذا يجب ضبطه في واجهة CircleCI الإدارية
-          # cron: "0 * * * *"
-          
-          # خيار للتشغيل اليدوي
-          when:
-            or:
-              - equal: [ true, << pipeline.parameters.force-run >> ]
-              # للجدولة، ستضبط في إعدادات CircleCI
-          
-          # إعدادات التزامن
-          # في CircleCI 2.1، يمكن استخدام `context` للتحكم بالتوازي
-          context: bot-context
+            '
