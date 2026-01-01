@@ -1,13 +1,10 @@
 version: 2.1
 
-orbs:
-  docker: circleci/docker@2.6.0
-
 workflows:
   bot_cycle:
     triggers:
       - schedule:
-          cron: "0 * * * *"   # كل ساعة
+          cron: "0 * * * *"
           filters:
             branches:
               only:
@@ -20,31 +17,26 @@ jobs:
     docker:
       - image: cimg/base:stable
     resource_class: medium
-    timeout: 260m
 
     steps:
       # ======================================
-      # 1. فحص الوقت (توقيت مصر) - الساعات المعكوسة
+      # 1. فحص الوقت (توقيت مصر)
       # ======================================
       - run:
           name: HARD STOP if not work hour (Egypt Time)
           command: |
             export TZ="Africa/Cairo"
-
-            echo "🇪🇬 Egypt Time now:"
             date
 
             HOUR=$(date +%H)
-
-            # الساعات المسموحة
             WORK_HOURS="01 02 03 04 09 10 11 12 17 18 19 20"
 
             if [[ ! " $WORK_HOURS " =~ " $HOUR " ]]; then
-              echo "⛔ الساعة الآن ($HOUR) بتوقيت مصر - خارج الجدول. إيقاف الـ Job."
+              echo "⛔ خارج الوقت المسموح"
               circleci step halt
             fi
 
-            echo "✅ الساعة الآن ($HOUR) بتوقيت مصر - مسموح بالعمل."
+            echo "✅ داخل الوقت المسموح"
 
       # ======================================
       # 2. Checkout
@@ -57,7 +49,7 @@ jobs:
             git clone https://${GH_TOKEN}@github.com/XXB4/RX.git private
 
       # ======================================
-      # 3. Docker Setup & Build
+      # 3. Docker
       # ======================================
       - setup_remote_docker:
           docker_layer_caching: true
@@ -68,39 +60,25 @@ jobs:
             docker build -t telegram-bot:latest ./private
 
       # ======================================
-      # 4. Run bot (Egypt Time Smart Kill)
+      # 4. Run bot (4h max)
       # ======================================
       - run:
-          name: Run bot (Egypt Time Smart Kill)
+          name: Run bot
           command: |
             docker run --rm -e TZ=Africa/Cairo telegram-bot bash -c '
-            
-            WORK_HOURS=" 01 02 03 04 09 10 11 12 17 18 19 20 "
-            
-            echo "🚀 Starting Python Bot in background (Egypt Time)..."
-            
-            python main.py &
-            BOT_PID=$!
-            
-            END=$((SECONDS+14400))  # 4 ساعات
+              WORK_HOURS=" 01 02 03 04 09 10 11 12 17 18 19 20 "
+              python main.py &
+              BOT_PID=$!
+              END=$((SECONDS+14400))
 
-            while [ $SECONDS -lt $END ]; do
-              sleep 60
+              while [ $SECONDS -lt $END ]; do
+                sleep 60
+                CURRENT_HOUR=$(date +%H)
+                if [[ ! "$WORK_HOURS" =~ " $CURRENT_HOUR " ]]; then
+                  kill $BOT_PID
+                  exit 0
+                fi
+              done
 
-              if ! kill -0 $BOT_PID 2>/dev/null; then
-                echo "⚠️ Bot process died unexpectedly!"
-                exit 1
-              fi
-
-              CURRENT_HOUR=$(date +%H)
-
-              if [[ ! "$WORK_HOURS" =~ " $CURRENT_HOUR " ]]; then
-                echo "⛔ الساعة $CURRENT_HOUR (مصر) - انتهى الوقت المسموح. إيقاف البوت..."
-                kill $BOT_PID
-                exit 0
-              fi
-            done
-
-            echo "⏱️ Max runtime reached (4 hours) — stopping bot"
-            kill $BOT_PID
+              kill $BOT_PID
             '
